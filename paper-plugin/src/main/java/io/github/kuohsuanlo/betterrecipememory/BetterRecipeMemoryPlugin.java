@@ -1,80 +1,190 @@
 package io.github.kuohsuanlo.betterrecipememory;
 
-import org.bukkit.ChatColor;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandSender;
+import io.papermc.paper.command.brigadier.BasicCommand;
+import io.papermc.paper.command.brigadier.CommandSourceStack;
+import org.bukkit.Bukkit;
+import org.bukkit.Keyed;
+import org.bukkit.NamespacedKey;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.inventory.Recipe;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.logging.Level;
 
 /**
- * BetterRecipeMemory datapack 的配套外掛,唯一功能:
- * 吞掉 datapack 移除配方成就後,老玩家首登時原版噴的一次性孤兒清理警告
- * "Ignored advancement 'minecraft:recipes/...' ... - it doesn't exist anymore?"
- * (net.minecraft.server.PlayerAdvancements#load;每人最多 ~1572 行,存檔後自動消失)。
- * 不裝 datapack 的伺服器裝本外掛無意義(該訊息不會出現),但也無害。
+ * Standalone Paper 1.21.8 plugin.
+ *
+ * <p>The bootstrapper supplies a small embedded datapack which filters vanilla recipe
+ * advancements before registries are built. This runtime class gives each player the
+ * complete recipe book once and suppresses the harmless orphan-advancement warnings
+ * created by old player data.</p>
  */
-public class BetterRecipeMemoryPlugin extends JavaPlugin {
+@SuppressWarnings("UnstableApiUsage")
+public final class BetterRecipeMemoryPlugin extends JavaPlugin implements Listener, BasicCommand {
 
     static final String AUTHOR_LINE =
             "crafted by 廢土貓大 LogoCat · 廢土 · mcfallout.net";
     static final String REPO =
-            "github.com/kuohsuanlo/BetterRecipeMemory-Datapack";
+            "github.com/TW527E/BetterRecipeMemory-Plugin";
+
+    private NamespacedKey recipeBookGrantedKey;
 
     @Override
     public void onLoad() {
-        // onLoad 比 onEnable 早、且早於任何玩家 join(孤兒警告只在 join 時出現),
-        // filter 失敗頂多回到「有噪音」的原狀,不能影響開服 → 全吞。
         try {
             OrphanAdvancementLogFilter.install();
             getLogger().info("Orphan-advancement log filter installed.");
-        } catch (Throwable t) {
-            getLogger().log(Level.WARNING, "Log filter install failed (non-fatal, noise stays): " + t);
+        } catch (Throwable throwable) {
+            getLogger().log(Level.WARNING,
+                    "Log filter install failed (non-fatal; orphan warnings will remain)", throwable);
         }
     }
 
     @Override
     public void onEnable() {
-        // 後台作者橫幅 —— datapack + 配套外掛同屬一個作品,一併署名。
-        getLogger().info("BetterRecipeMemoryPlugin (datapack companion) —— " + AUTHOR_LINE);
+        recipeBookGrantedKey = new NamespacedKey(this, "recipe_book_granted_v1");
+        getServer().getPluginManager().registerEvents(this, this);
+        registerCommand("brm", "BetterRecipeMemory information and administration", List.of(), this);
+
+        getLogger().info("BetterRecipeMemory for Paper 1.21.8 — " + AUTHOR_LINE);
+        getLogger().info("The recipe-advancement filter is bundled in this jar; no separate datapack is needed.");
         getLogger().info(REPO);
-        if (getCommand("brm") != null) {
-            getCommand("brm").setExecutor(this);
+
+        // Also covers plugin reloads. Normal startup has no online players here.
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            grantRecipesOnce(player);
         }
     }
 
-    @Override
-    public boolean onCommand(CommandSender s, Command cmd, String label, String[] args) {
-        String sub = args.length == 0 ? "about" : args[0].toLowerCase();
-        switch (sub) {
-            case "help":
-                s.sendMessage(ChatColor.GOLD + "BetterRecipeMemory " + ChatColor.GRAY + "commands:");
-                s.sendMessage(ChatColor.YELLOW + "/brm about   " + ChatColor.GRAY + "— author & project card");
-                s.sendMessage(ChatColor.YELLOW + "/brm version " + ChatColor.GRAY + "— plugin version");
-                s.sendMessage(ChatColor.YELLOW + "/brm help    " + ChatColor.GRAY + "— this list");
-                return true;
-            case "version":
-                s.sendMessage(ChatColor.GOLD + "BetterRecipeMemoryPlugin "
-                        + ChatColor.WHITE + getDescription().getVersion());
-                return true;
-            case "about":
-            default:
-                s.sendMessage(ChatColor.GOLD + "" + ChatColor.BOLD + "BetterRecipeMemory "
-                        + ChatColor.GRAY + "(datapack + companion plugin)");
-                s.sendMessage(ChatColor.YELLOW + "—— " + AUTHOR_LINE);
-                s.sendMessage(ChatColor.WHITE + "移除原版配方成就 · 保留配方書一鍵合成 · 每玩家成就物件 1688→127");
-                s.sendMessage(ChatColor.AQUA + "" + ChatColor.UNDERLINE + REPO);
-                return true;
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        grantRecipesOnce(event.getPlayer());
+    }
+
+    private void grantRecipesOnce(Player player) {
+        if (player.getPersistentDataContainer().has(recipeBookGrantedKey, PersistentDataType.BYTE)) {
+            return;
+        }
+
+        int granted = grantAllRecipes(player);
+        if (granted >= 0) {
+            player.getPersistentDataContainer().set(recipeBookGrantedKey, PersistentDataType.BYTE, (byte) 1);
+            getLogger().fine(() -> "Initial recipe-book grant completed for " + player.getName()
+                    + " (" + granted + " newly discovered recipes).");
         }
     }
 
+    private int grantAllRecipes(Player player) {
+        Set<NamespacedKey> recipeKeys = new LinkedHashSet<>();
+        var iterator = Bukkit.recipeIterator();
+        while (iterator.hasNext()) {
+            Recipe recipe = iterator.next();
+            if (recipe instanceof Keyed keyed) {
+                recipeKeys.add(keyed.getKey());
+            }
+        }
+
+        if (recipeKeys.isEmpty()) {
+            getLogger().warning("Recipe registry was empty; will retry for " + player.getName()
+                    + " on their next join.");
+            return -1;
+        }
+
+        return player.discoverRecipes(recipeKeys);
+    }
+
     @Override
-    public List<String> onTabComplete(CommandSender s, Command cmd, String alias, String[] args) {
+    public void execute(CommandSourceStack source, String[] args) {
+        String subcommand = args.length == 0 ? "about" : args[0].toLowerCase(Locale.ROOT);
+
+        switch (subcommand) {
+            case "help" -> sendHelp(source);
+            case "version" -> source.getSender().sendRichMessage(
+                    "<gold>BetterRecipeMemory <white>" + getPluginMeta().getVersion());
+            case "refill" -> refill(source, args);
+            case "about" -> sendAbout(source);
+            default -> {
+                source.getSender().sendRichMessage("<red>Unknown subcommand. Use <yellow>/brm help</yellow>.");
+                sendHelp(source);
+            }
+        }
+    }
+
+    private void refill(CommandSourceStack source, String[] args) {
+        if (!source.getSender().hasPermission("betterrecipememory.admin")) {
+            source.getSender().sendRichMessage("<red>You do not have permission to use this command.");
+            return;
+        }
+
+        Player target;
+        if (args.length >= 2) {
+            target = Bukkit.getPlayerExact(args[1]);
+            if (target == null) {
+                source.getSender().sendRichMessage("<red>Player is not online: <white>" + args[1]);
+                return;
+            }
+        } else if (source.getExecutor() instanceof Player player) {
+            target = player;
+        } else {
+            source.getSender().sendRichMessage("<red>Console usage: /brm refill <player>");
+            return;
+        }
+
+        int granted = grantAllRecipes(target);
+        if (granted >= 0) {
+            target.getPersistentDataContainer().set(recipeBookGrantedKey, PersistentDataType.BYTE, (byte) 1);
+            source.getSender().sendRichMessage("<green>Recipe book filled for <white>" + target.getName()
+                    + "</white> (<yellow>" + granted + "</yellow> newly discovered).");
+        }
+    }
+
+    private void sendHelp(CommandSourceStack source) {
+        source.getSender().sendRichMessage("<gold>BetterRecipeMemory <gray>commands:");
+        source.getSender().sendRichMessage("<yellow>/brm about <gray>— project information");
+        source.getSender().sendRichMessage("<yellow>/brm version <gray>— plugin version");
+        if (source.getSender().hasPermission("betterrecipememory.admin")) {
+            source.getSender().sendRichMessage("<yellow>/brm refill [player] <gray>— grant every recipe again");
+        }
+    }
+
+    private void sendAbout(CommandSourceStack source) {
+        source.getSender().sendRichMessage("<gold><bold>BetterRecipeMemory</bold> <gray>(standalone Paper plugin)");
+        source.getSender().sendRichMessage("<yellow>— " + AUTHOR_LINE);
+        source.getSender().sendRichMessage("<white>Removes vanilla recipe advancements and keeps the full recipe book.");
+        source.getSender().sendRichMessage("<aqua><underlined>https://" + REPO);
+    }
+
+    @Override
+    public Collection<String> suggest(CommandSourceStack source, String[] args) {
+        if (args.length == 0) {
+            return List.of("about", "help", "version", "refill");
+        }
         if (args.length == 1) {
-            return Arrays.asList("about", "help", "version");
+            List<String> choices = new ArrayList<>(List.of("about", "help", "version"));
+            if (source.getSender().hasPermission("betterrecipememory.admin")) {
+                choices.add("refill");
+            }
+            String prefix = args[0].toLowerCase(Locale.ROOT);
+            return choices.stream().filter(choice -> choice.startsWith(prefix)).toList();
         }
-        return java.util.Collections.emptyList();
+        if (args.length == 2 && args[0].equalsIgnoreCase("refill")
+                && source.getSender().hasPermission("betterrecipememory.admin")) {
+            String prefix = args[1].toLowerCase(Locale.ROOT);
+            return Bukkit.getOnlinePlayers().stream()
+                    .map(Player::getName)
+                    .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(prefix))
+                    .toList();
+        }
+        return List.of();
     }
 }
