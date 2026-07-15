@@ -2,9 +2,9 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.kuohsuanlo</groupId>
   <artifactId>betterrecipememory</artifactId>
-  <version>26.2-1</version>
-  <name>BetterRecipeMemoryPlugin</name>
-  <url></url>
+  <version>1.21.8-1.0.0</version>
+  <name>BetterRecipeMemory</name>
+  <url>https://github.com/TW527E/BetterRecipeMemory-Plugin</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -18,11 +18,11 @@
   </repositories>
 
   <dependencies>
-    <!--Paper API-->
+	<!-- Paper 1.21.8 API; provided by the server at runtime. -->
 	<dependency>
 	    <groupId>io.papermc.paper</groupId>
 	    <artifactId>paper-api</artifactId>
-	    <version>26.2.build.26-alpha</version>
+	    <version>1.21.8-R0.1-SNAPSHOT</version>
 	    <scope>provided</scope>
 	</dependency>
 	<!-- log4j-core: Paper runtime 內建,僅編譯期需要 -->
@@ -35,7 +35,7 @@
   </dependencies>
 
   <build>
-    <finalName>BetterRecipeMemoryPlugin-${project.version}</finalName>
+    <finalName>BetterRecipeMemory-${project.version}</finalName>
     <resources>
       <resource>
         <directory>src/main/resources</directory>
@@ -46,7 +46,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.8.1</version>
+        <version>3.13.0</version>
         <configuration>
           <source>21</source>
           <target>21</target>

@@ -1,0 +1,8 @@
+name: BetterRecipeMemory
+version: '${version}'
+main: io.github.kuohsuanlo.betterrecipememory.BetterRecipeMemoryPlugin
+bootstrapper: io.github.kuohsuanlo.betterrecipememory.BetterRecipeMemoryBootstrap
+api-version: '1.21.8'
+description: Removes vanilla recipe advancements while preserving a full recipe book, delivered as one Paper plugin.
+authors: [kuohsuanlo]
+website: https://github.com/TW527E/BetterRecipeMemory-Plugin
